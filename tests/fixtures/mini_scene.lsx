@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<save>
+	<version major="4" minor="6" revision="0" build="1" />
+	<region id="TLScene">
+		<node id="root">
+			<children>
+				<node id="TLActors">
+					<children>
+						<node id="TLActor"><attribute id="ActorType" type="uint8" value="2" /></node>
+						<node id="TLActor"><attribute id="ActorType" type="uint8" value="4" /></node>
+						<node id="TLActor"><attribute id="ActorType" type="uint8" value="4" /></node>
+						<node id="TLActor"><attribute id="ActorType" type="uint8" value="8" /></node>
+					</children>
+				</node>
+			</children>
+		</node>
+	</region>
+</save>

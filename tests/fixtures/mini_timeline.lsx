@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<save>
+	<version major="4" minor="6" revision="0" build="1" />
+	<region id="TimelineContent">
+		<node id="TimelineContent">
+			<children>
+				<node id="Effect">
+					<attribute id="Duration" type="float" value="5" />
+					<children>
+						<node id="Phases">
+							<children>
+								<node id="Phase">
+									<attribute id="Duration" type="float" value="5" />
+									<attribute id="PlayCount" type="int32" value="1" />
+									<attribute id="DialogNodeId" type="guid" value="00000000-0000-0000-0000-000000000g01" />
+									<children><node id="QuestionHoldAutomation" /></children>
+								</node>
+							</children>
+						</node>
+						<node id="Inputs" />
+						<node id="EffectComponents">
+							<children>
+								<node id="EffectComponent">
+									<attribute id="Type" type="LSString" value="TLVoice" />
+									<attribute id="ID" type="guid" value="00000000-0000-0000-0000-0000000000e1" />
+									<attribute id="StartTime" type="float" value="0" />
+									<attribute id="EndTime" type="float" value="4" />
+									<attribute id="PhaseIndex" type="int64" value="0" />
+									<attribute id="DialogNodeId" type="guid" value="00000000-0000-0000-0000-000000000g01" />
+									<children><node id="Actor"><attribute id="UUID" type="guid" value="00000000-0000-0000-0000-0000000000a0" /></node></children>
+								</node>
+							</children>
+						</node>
+					</children>
+				</node>
+				<node id="TimelineSpeakers">
+					<children>
+						<node id="Object" key="MapKey"><attribute id="MapKey" type="int32" value="0" /><attribute id="MapValue" type="guid" value="00000000-0000-0000-0000-0000000000a0" /></node>
+						<node id="Object" key="MapKey"><attribute id="MapKey" type="int32" value="1" /><attribute id="MapValue" type="guid" value="00000000-0000-0000-0000-0000000000a1" /></node>
+						<node id="Object" key="MapKey"><attribute id="MapKey" type="int32" value="2" /><attribute id="MapValue" type="guid" value="00000000-0000-0000-0000-0000000000a2" /></node>
+					</children>
+				</node>
+				<node id="TimelineActorData">
+					<children>
+						<node id="TimelineActorData">
+							<children>
+								<node id="Object" key="MapKey">
+									<attribute id="MapKey" type="guid" value="00000000-0000-0000-0000-0000000000a2" />
+									<children>
+										<node id="Value">
+											<attribute id="Speaker" type="int32" value="2" />
+											<attribute id="ActorTypeId" type="FixedString" value="character" />
+											<attribute id="SceneActorType" type="uint8" value="4" />
+											<children><node id="CompiledNodeSnapshots"><children><node id="ComponentMap"><children><node id="Object" key="MapKey" /></children></node></children></node></children>
+										</node>
+									</children>
+								</node>
+							</children>
+						</node>
+					</children>
+				</node>
+				<node id="TimelinePhases">
+					<children>
+						<node id="Object">
+							<children>
+								<node id="Object" key="MapKey"><attribute id="MapKey" type="guid" value="00000000-0000-0000-0000-000000000g01" /><attribute id="MapValue" type="uint64" value="0" /></node>
+							</children>
+						</node>
+					</children>
+				</node>
+			</children>
+		</node>
+	</region>
+</save>
