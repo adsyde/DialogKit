@@ -152,3 +152,85 @@ def test_patches_in_order_and_two_mods():
 def test_wrong_dialog():
     with pytest.raises(PatchError, match="патч для other"):
         apply_patches(tree(), [patch([], dialog="other")], name="mini")
+
+
+# ── add_roll: проверка рядом с вариантом без броска (очарование торговца) ──────
+F_OK, F_BAD = "00000000-0000-0000-0000-0000000000f5", "00000000-0000-0000-0000-0000000000f6"
+DC = "00000000-0000-0000-0000-0000000000d7"
+
+
+def charm_roll(**extra):
+    op = {"op": "add_roll", "key": "charm", "like": Q1, "text": "hCHARM",
+          "roll": {"ability": "Charisma", "dc": DC},
+          "conditions_add": [{"type": "Tag", "flag": REALLY_SH, "value": True, "slot": 1}],
+          "success": {"set_flags_add": [{"type": "Object", "flag": F_OK, "value": True, "slot": 0}]},
+          "failure": {"set_flags_add": [{"type": "Object", "flag": F_BAD, "value": True, "slot": 0}]}}
+    op.update(extra)
+    return op
+
+
+def test_add_roll_both_outcomes_lead_where_option_leads():
+    t = tree()
+    p = patch([charm_roll()])
+    apply_patches(t, [p], name="mini")
+    d = Dialog(t)
+    n, rs, rf = d.node(p.uid("charm")), d.node(p.uid("charm:success")), d.node(p.uid("charm:failure"))
+    assert lsx.value(n, "constructor") == "ActiveRoll"
+    assert (lsx.value(n, "Ability"), lsx.value(n, "Skill"), lsx.value(n, "RollType")) == ("Charisma", "", "RawAbility")
+    assert (lsx.value(n, "DifficultyClassID"), lsx.value(n, "RollTargetSpeaker"), lsx.value(n, "speaker")) == (DC, "0", "1")
+    assert d.children_of(n) == [p.uid("charm:success"), p.uid("charm:failure")]
+    assert (lsx.value(rs, "Success"), lsx.value(rf, "Success")) == ("True", "False")
+    assert d.children_of(rs) == [A1] and d.children_of(rf) == [A1]           # оба исхода — туда же, куда вариант
+    assert flags(rs, "setflags") == [("Object", F_OK, "True", "0")]
+    assert flags(rf, "setflags") == [("Object", F_BAD, "True", "0")]
+    assert flags(n, "checkflags") == [("Tag", REALLY_SH, "True", "1")]
+    assert d.children_of(d.node(G1)) == [Q1, p.uid("charm"), Q2, R1]         # сразу после варианта
+    text = [a for a in n.iter("attribute") if a.get("id") == "TagText"][0]
+    assert text.get("handle") == "hCHARM"
+    line = next(a for a in n.iter("attribute") if a.get("id") == "LineId").get("value")
+    assert line != "00000000-0000-0000-0000-00000000l0q1"
+    assert lsx.value(d.node(Q1), "constructor") == "TagQuestion" and d.children_of(d.node(Q1)) == [A1]
+
+
+def test_add_roll_deterministic():
+    a, b = tree(), tree()
+    apply_patches(a, [patch([charm_roll()])], name="mini")
+    apply_patches(b, [patch([charm_roll()])], name="mini")
+    assert lsx.ET.tostring(a.getroot()) == lsx.ET.tostring(b.getroot())
+
+
+@pytest.mark.parametrize("extra, msg", [
+    ({"like": R1}, "уже бросок"),
+    ({"roll": {"ability": "Charisma"}}, "roll.dc"),
+    ({"failure": {"children": [A2]}}, "можно только в исходы образца"),
+])
+def test_add_roll_rules(extra, msg):
+    with pytest.raises(PatchError, match=msg):
+        apply_patches(tree(), [patch([charm_roll(**extra)])], name="mini")
+
+
+# ── text.replace_all: образец с несколькими вариантами текста ────────────────
+def two_texts_tree():
+    t = tree()
+    q = Dialog(t).node(Q1)
+    holder = lsx.kid(q, "TaggedTexts")
+    extra = copy.deepcopy(lsx.kids(holder, "TaggedText")[0])
+    rg = lsx.kid(extra, "RuleGroup", create=True)
+    rules = lsx.kid(rg, "Rules", create=True)
+    lsx.children(rules, create=True).append(lsx.element("Rule"))
+    lsx.children(holder).append(extra)
+    return t
+
+
+def test_text_replace_all():
+    t = two_texts_tree()
+    with pytest.raises(PatchError, match="replace_all"):
+        apply_patches(copy.deepcopy(t), [patch([{"op": "add_node", "key": "x", "like": Q1, "text": "hX"}])], name="mini")
+    p = patch([{"op": "add_node", "key": "x", "like": Q1, "text": {"handle": "hX", "replace_all": True}}])
+    apply_patches(t, [p], name="mini")
+    n = Dialog(t).node(p.uid("x"))
+    texts = [a.get("handle") for a in n.iter("attribute") if a.get("id") == "TagText"]
+    assert texts == ["hX"]
+    assert not list(n.iter("Rule")) and not [x for x in n.iter("node") if x.get("id") == "Rule"]
+    q = Dialog(t).node(Q1)                                                  # оригинал — с двумя текстами
+    assert len([a for a in q.iter("attribute") if a.get("id") == "TagText"]) == 2
