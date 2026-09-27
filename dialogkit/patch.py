@@ -203,6 +203,55 @@ def _timeline_actor(ctx, index, mapping):
     actors.append(a)
 
 
+def _set_text(ctx, n, text, like_id):
+    """text: "h…" или {"handle", "version", "replace_all"}. Обычно у образца должен быть один текст.
+    replace_all: все варианты текста (TaggedText с правилами по тегам — например, «колдуну» и «остальным»)
+    заменяются одним безусловным: остается первый TaggedText с одной строкой и пустыми правилами."""
+    t = text if isinstance(text, dict) else {"handle": text}
+    if t.get("replace_all"):
+        holder = lsx.kid(n, "TaggedTexts")
+        tagged = lsx.kids(holder, "TaggedText") if holder is not None else []
+        if not tagged:
+            raise PatchError(f"{ctx.patch.origin}: у образца {like_id} нет текста")
+        for extra in tagged[1:]:
+            lsx.children(holder).remove(extra)
+        first = tagged[0]
+        tag_texts = lsx.kid(first, "TagTexts")
+        lines = lsx.kids(tag_texts, "TagText") if tag_texts is not None else []
+        if not lines:
+            raise PatchError(f"{ctx.patch.origin}: у образца {like_id} нет строки текста")
+        for extra in lines[1:]:
+            lsx.children(tag_texts).remove(extra)
+        for group in lsx.kids(first, "RuleGroup"):
+            for rules in lsx.kids(group, "Rules"):
+                ch = rules.find("children")
+                if ch is not None:
+                    rules.remove(ch)
+    texts = [a for a in n.iter("attribute") if a.get("id") == "TagText"]
+    if len(texts) != 1:
+        raise PatchError(f"{ctx.patch.origin}: у образца {like_id} {len(texts)} текстов — задайте образец с одним "
+                         "или text.replace_all")
+    texts[0].set("handle", t["handle"])
+    texts[0].set("version", str(t.get("version", 1)))
+
+
+def _attach(ctx, like_id, nid, parents):
+    """Куда подвесить новый узел: по умолчанию ("like") — ко всем родителям образца сразу после него
+    (и в корни, если он корневой); иначе — [{"node", "after"}]."""
+    if parents == "like":
+        for p in ctx.dlg.parents_of(like_id, exclude=set(ctx.new_nodes)):   # родители — только узлы базы
+            if lsx.value(p, "UUID") != nid:
+                ctx.dlg.add_ref(p, nid, after=like_id)
+        for r in ctx.dlg.roots():
+            if lsx.value(r, "RootNodes") == like_id:
+                ref = copy.deepcopy(r)
+                lsx.set_value(ref, "RootNodes", nid)
+                ctx.dlg.nodes_root.insert(list(ctx.dlg.nodes_root).index(r) + 1, ref)
+    else:
+        for p in parents:
+            ctx.dlg.add_ref(ctx.dlg.node(ctx.ref(p["node"])), nid, after=ctx.ref(p.get("after")))
+
+
 def op_add_node(ctx, op):
     like = ctx.dlg.node(ctx.ref(op["like"]))
     like_id = lsx.value(like, "UUID")
@@ -226,12 +275,7 @@ def op_add_node(ctx, op):
             a.set("value", str(uuid.uuid5(uuid.UUID(derive["ns"]), f"{a.get('value')}:{derive['tag']}"))
                   if derive else ctx.patch.uid(f"{op.get('key', nid)}:line:{a.get('value')}"))
     if "text" in op:
-        texts = [a for a in n.iter("attribute") if a.get("id") == "TagText"]
-        if len(texts) != 1:
-            raise PatchError(f"{ctx.patch.origin}: у образца {like_id} {len(texts)} текстов — задайте образец с одним")
-        t = op["text"] if isinstance(op["text"], dict) else {"handle": op["text"]}
-        texts[0].set("handle", t["handle"])
-        texts[0].set("version", str(t.get("version", 1)))
+        _set_text(ctx, n, op["text"], like_id)
     if "move_slot" in op:
         _move_slot(n, *op["move_slot"])
     if "roll" in op:
@@ -263,20 +307,7 @@ def op_add_node(ctx, op):
         ctx.keys[op["key"]] = nid
     ctx.new_nodes.append(nid)
     ctx.likes[nid] = like_id
-    # куда подвесить: по умолчанию — ко всем родителям образца сразу после него (и в корни, если он корневой)
-    parents = op.get("parents", "like")
-    if parents == "like":
-        for p in ctx.dlg.parents_of(like_id, exclude=set(ctx.new_nodes)):   # родители — только узлы базы
-            if lsx.value(p, "UUID") != nid:
-                ctx.dlg.add_ref(p, nid, after=like_id)
-        for r in ctx.dlg.roots():
-            if lsx.value(r, "RootNodes") == like_id:
-                ref = copy.deepcopy(r)
-                lsx.set_value(ref, "RootNodes", nid)
-                ctx.dlg.nodes_root.insert(list(ctx.dlg.nodes_root).index(r) + 1, ref)
-    else:
-        for p in parents:
-            ctx.dlg.add_ref(ctx.dlg.node(ctx.ref(p["node"])), nid, after=ctx.ref(p.get("after")))
+    _attach(ctx, like_id, nid, op.get("parents", "like"))
     if op.get("voice"):
         _voice_phase(ctx, n, op["voice"])
 
@@ -325,6 +356,106 @@ def _voice_phase(ctx, n, voice):
     lsx.set_value(effect, "Duration", round(start + duration, 4), "float")
 
 
+ROLL_ATTRS = [("ShowOnce", "bool"), ("transitionmode", "uint8"), ("RollType", "string"), ("Ability", "string"),
+              ("Skill", "string"), ("RollTargetSpeaker", "int32"), ("Advantage", "uint8"),
+              ("ExcludeCompanionsOptionalBonuses", "bool"), ("ExcludeSpeakerOptionalBonuses", "bool"),
+              ("DifficultyClassID", "guid")]
+
+
+def _roll_result(nid, success, kids, flags):
+    """Узел RollResult в том виде, как в диалогах игры: дети, Tags, setflags, checkflags."""
+    n = lsx.element("node", "UUID", [("constructor", "FixedString", "RollResult"), ("UUID", "FixedString", nid),
+                                     ("Success", "bool", "True" if success else "False")])
+    ch = ET.SubElement(n, "children")
+    holder = ET.SubElement(ch, "node", {"id": "children"})
+    lst = ET.SubElement(holder, "children")
+    for k in kids:
+        lst.append(lsx.element("child", attrs=[("UUID", "FixedString", k)]))
+    for name in ("Tags", "setflags", "checkflags"):
+        ET.SubElement(ch, "node", {"id": name})
+    _add_flags(n, "setflags", flags)
+    return n
+
+
+def op_add_roll(ctx, op):
+    """Проверка рядом с вариантом без броска (например, «Торговать»): узел ActiveRoll по образцу варианта
+    (текст, условия, флаги, говорящий — от образца) и два новых RollResult. По умолчанию оба исхода ведут туда же,
+    куда образец (ничего не меняется в ходе беседы), а различаются флагами:
+      {"op": "add_roll", "key", "like", "text", "roll": {"ability", "skill", "roll_type", "dc", "advantage",
+       "target", "show_once"}, "conditions"/"conditions_add", "set_flags_add",
+       "success": {"set_flags_add": [...], "children": [...]}, "failure": {...}, "parents"}
+    children исхода — только исходы образца или новые узлы патча (@key)."""
+    like = ctx.dlg.node(ctx.ref(op["like"]))
+    like_id = lsx.value(like, "UUID")
+    if lsx.value(like, "constructor") in ("ActiveRoll", "PassiveRoll", "RollResult"):
+        raise PatchError(f"{ctx.patch.origin}: образец {like_id} уже бросок — используйте add_node с roll")
+    roll = op.get("roll", {})
+    if "dc" not in roll:
+        raise PatchError(f"{ctx.patch.origin}: add_roll без roll.dc")
+    nid = op.get("uuid") or ctx.patch.uid(op["key"])
+    rs, rf = ctx.patch.uid(f"{op['key']}:success"), ctx.patch.uid(f"{op['key']}:failure")
+    for x in (nid, rs, rf):
+        if x in ctx.dlg.by_id:
+            raise PatchError(f"{ctx.patch.origin}: узел {x} уже есть")
+    like_kids = ctx.dlg.children_of(like)
+    target = roll.get("target")
+    if target is None:                      # по умолчанию — говорящий реплики, после которой стоит вариант
+        parents = ctx.dlg.parents_of(like_id, exclude=set(ctx.new_nodes))
+        if not parents:
+            raise PatchError(f"{ctx.patch.origin}: у образца {like_id} нет родителя — задайте roll.target")
+        target = lsx.value(parents[0], "speaker")
+    n = copy.deepcopy(like)
+    lsx.set_value(n, "constructor", "ActiveRoll")
+    lsx.set_value(n, "UUID", nid)
+    for a in n.iter("attribute"):
+        if a.get("id") == "LineId":
+            a.set("value", ctx.patch.uid(f"{op['key']}:line:{a.get('value')}"))
+    if "text" in op:
+        _set_text(ctx, n, op["text"], like_id)
+    skill = roll.get("skill", "")
+    values = {"ShowOnce": "True" if roll.get("show_once", True) else "False", "transitionmode": 2,
+              "RollType": roll.get("roll_type", "SkillCheck" if skill else "RawAbility"),
+              "Ability": roll.get("ability", "Charisma"), "Skill": skill, "RollTargetSpeaker": ctx.slot(target),
+              "Advantage": roll.get("advantage", 0), "ExcludeCompanionsOptionalBonuses": "False",
+              "ExcludeSpeakerOptionalBonuses": "False", "DifficultyClassID": roll["dc"]}
+    for name, typ in ROLL_ATTRS:
+        lsx.set_value(n, name, values[name], typ)
+    if "approval" in op:
+        lsx.set_value(n, "ApprovalRatingID", op["approval"], "guid")
+    if "conditions" in op:
+        for block in lsx.kids(n, "checkflags"):
+            lsx.children(n).remove(block)
+        _add_flags(n, "checkflags", op["conditions"])
+    _add_flags(n, "checkflags", op.get("conditions_add", []))
+    _add_flags(n, "setflags", op.get("set_flags_add", []))
+    holder = lsx.kid(n, "children", create=True)
+    lst = lsx.children(holder, create=True)
+    for c in list(lst):
+        lst.remove(c)
+    for r in (rs, rf):
+        lst.append(lsx.element("child", attrs=[("UUID", "FixedString", r)]))
+    results = []
+    for rid, ok, part in ((rs, True, op.get("success", {})), (rf, False, op.get("failure", {}))):
+        kids_ = [ctx.ref(c) for c in part["children"]] if "children" in part else like_kids
+        for k in kids_:
+            if k not in like_kids and not (isinstance(k, str) and k in ctx.new_nodes):
+                raise PatchError(f"{ctx.patch.origin}: исход {rid} ведет в {k} — можно только в исходы образца "
+                                 "или в новые узлы патча")
+        results.append(_roll_result(rid, ok, kids_, part.get("set_flags_add", [])))
+    pos = list(ctx.dlg.nodes_root).index(like) + 1
+    for i, x in enumerate([n] + results):
+        ctx.dlg.nodes_root.insert(pos + i, x)
+    for x, xid in zip([n] + results, (nid, rs, rf)):
+        ctx.dlg.by_id[xid] = x
+        ctx.new_nodes.append(xid)
+        ctx.likes[xid] = like_id
+    if "key" in op:
+        ctx.keys[op["key"]] = nid
+        ctx.keys[op["key"] + ":success"] = rs
+        ctx.keys[op["key"] + ":failure"] = rf
+    _attach(ctx, like_id, nid, op.get("parents", "like"))
+
+
 def op_add_child(ctx, op):
     parent = ctx.dlg.node(ctx.ref(op["parent"]))
     child = ctx.ref(op["child"])
@@ -334,7 +465,7 @@ def op_add_child(ctx, op):
     ctx.dlg.add_ref(parent, child, after=ctx.ref(op.get("after")))
 
 
-OPS = {"add_speaker": op_add_speaker, "add_node": op_add_node, "add_child": op_add_child}
+OPS = {"add_speaker": op_add_speaker, "add_node": op_add_node, "add_roll": op_add_roll, "add_child": op_add_child}
 
 
 def _validate(ctx):
